@@ -78,6 +78,8 @@ namespace CodeGolds
             h = new double[4][];
             decs = new double[4][];
         }
+
+     
         public void UpdateValues()
         {
             Beta = ToDouble(Beta_param);
@@ -87,7 +89,7 @@ namespace CodeGolds
 
             minSNR = ToDouble(SNRmin_param);
             maxSNR = ToDouble(SNRmax_param);
-            M = ToInt(CountOfSNRSteps_param);
+            M = (int)((1 / ToDouble(CountOfSNRSteps_param)) * (maxSNR + Math.Abs(minSNR)));
             N = ToInt(CountOfExps_param);
         }
 
@@ -107,6 +109,12 @@ namespace CodeGolds
             DrawS();
             Experiment();
         }
+
+        private void Form1_Load(object sender, EventArgs e)
+        {
+
+        }
+
         private void NoiseSignals(double SNR)
         {
             nI = Arrays.AddNoise(I, SNR);
@@ -131,7 +139,7 @@ namespace CodeGolds
             }
         }
 
-        private void Experiment(bool is_threaded = false)
+        private  int Experiment(bool is_threaded = false)
         {
             for (int i = 0; i < decs.Length; i++)
             {
@@ -140,10 +148,95 @@ namespace CodeGolds
 
             if (!is_threaded)
                 DrawCorrelation();
+            int[] max_idx = new int[bits.Length / 2];
+            for (int i = 0; i < max_idx.Length; i++)
+            {
+                double[][] cut_of_rxx = new double[4][];
+                double max = double.MinValue;
+                int idx = -1;
+                for (int k = 0; k < 4; k++)
+                {
+                    cut_of_rxx[k] = Arrays.Cut(decs[k], i * gold[0].Length * CountsPerBit, (i + 1) * gold[0].Length * CountsPerBit);
+                    double potentional_max = Arrays.GetMax(cut_of_rxx[k]);
+                    if (potentional_max > max)
+                    {
+                        max = potentional_max;
+                        idx = k;
+                    }
+                }
+                max_idx[i] = idx;
+            }
 
-        
+            int right_bits = 0;
+            int[] decoded_bits = Sequences.GoldDetransform(max_idx);
+            for (int i = 0; i < bits.Length; i++)
+            {
+                right_bits += bits[i] == decoded_bits[i] ? 1 : 0;
+            }
+            double success = (double)(right_bits) / bits.Length;
+            if (!is_threaded)
+                success_param.Text = (success * 100).ToString("F2");
+
+            string decoded_bits_str = Bits.ToString(decoded_bits, 16);
+            if (!is_threaded)
+                DecodedBits_param.Text = decoded_bits_str;
+
+            return right_bits;
+
         }
+        private void Experiment_action_Click(object sender, EventArgs e)
+        {
+            if (exp_thread != null)
+            {
+                if (exp_thread.IsAlive)
+                {
+                    exp_thread.Abort();
+                }
+            }
 
+            UpdateValues();
+
+            bits = Bits.FromString(Bits_param.Text);
+            changed_bits = Sequences.GoldTransform(bits, gold);
+
+            GetSignals();
+
+            success = new double[M + 1];
+            SNR_values = new double[M + 1];
+            for (int i = 0; i < SNR_values.Length; i++)
+            {
+                SNR_values[i] = minSNR + (maxSNR - minSNR) * i / (double)M;
+            }
+
+            ExpThread();
+            //exp_thread.Start();
+
+            chart_Experiment.Series[0].Points.Clear();
+            for (int i = 0; i < M + 1; i++)
+            {
+                chart_Experiment.Series[0].Points.AddXY(SNR_values[i], success[i]);
+            }
+        }
+        public void ExpThread()
+        {
+            int right_bits = 0;
+            int total_bits = bits.Length * N;
+            double local_success;
+            double progress = 0;
+
+            /// Эксперимент
+            for (int i = 0; i < N; i++)
+            {
+                for (int snr = 0; snr < M + 1; snr++)
+                {
+                    NoiseSignals(SNR_values[snr]);
+                    right_bits = Experiment(true);
+                    local_success = (double)right_bits / total_bits;
+                    success[snr] += local_success;
+                    progress += 1.0 / N / (M + 1);
+                }
+            }
+        }
         private void CountsPerBit_param_TextChanged(object sender, EventArgs e)
         {
             try
